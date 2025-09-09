@@ -1,9 +1,5 @@
 from typing import OrderedDict, TypeVar, Callable
-
-try:
-    from annoy import AnnoyIndex
-except ImportError:
-    AnnoyIndex = None
+from annoy import AnnoyIndex
 
 __all__ = ["semantic_cache", "FuzzyDict", "FuzzyLruCache"]
 
@@ -59,7 +55,7 @@ class FuzzyDict(dict[TKey, TValue]):
         self.embeddings: dict[TKey, tuple[float, ...]] = {}
 
         # Annoy-related fields
-        self._ann_index = None  # type: AnnoyIndex | None
+        self._ann_index: AnnoyIndex | None = None
         self._ann_id_for_key: dict[TKey, int] = {}
         self._key_for_ann_id: dict[int, TKey] = {}
         self._next_ann_id = 0
@@ -74,10 +70,7 @@ class FuzzyDict(dict[TKey, TValue]):
 
         This is called lazily when needed for approximate searches.
         """
-        if AnnoyIndex is None:
-            return
-
-        idx = AnnoyIndex(dim, "euclidean")
+        idx = AnnoyIndex(dim, "angular")  # Angular distance = 1 - cosine similarity
         for key, emb in self.embeddings.items():
             ann_id = self._ann_id_for_key.get(key)
             if ann_id is None:
@@ -107,13 +100,13 @@ class FuzzyDict(dict[TKey, TValue]):
         if key not in self.embeddings:
             emb = self.embed_func(str(key))
             self.embeddings[key] = emb
-            if AnnoyIndex is not None:
-                # lazily initialize ids; mark dirty so we rebuild before queries
-                if key not in self._ann_id_for_key:
-                    self._ann_id_for_key[key] = self._next_ann_id
-                    self._key_for_ann_id[self._next_ann_id] = key
-                    self._next_ann_id += 1
-                self._ann_index_dirty = True
+
+            # lazily initialize ids; mark dirty so we rebuild before queries
+            if key not in self._ann_id_for_key:
+                self._ann_id_for_key[key] = self._next_ann_id
+                self._key_for_ann_id[self._next_ann_id] = key
+                self._next_ann_id += 1
+            self._ann_index_dirty = True
         return super().__setitem__(key, value)
 
     def __delitem__(self, key: TKey) -> None:
@@ -125,7 +118,6 @@ class FuzzyDict(dict[TKey, TValue]):
 
         Note: Marks Annoy index as dirty for rebuild on next search.
         """
-        # guard in case key is not present in embeddings for some reason
         if key in self.embeddings:
             del self.embeddings[key]
             if key in self._ann_id_for_key:
@@ -138,7 +130,7 @@ class FuzzyDict(dict[TKey, TValue]):
     def distance(cls, emb1: tuple[float, ...], emb2: tuple[float, ...]) -> float:
         """
         Compute cosine similarity between two embeddings.
-        
+
         Returns cosine similarity ranging from -1 to 1:
         - 1.0: identical vectors (exact match)
         - 0.0: orthogonal vectors (no similarity)
@@ -149,18 +141,18 @@ class FuzzyDict(dict[TKey, TValue]):
         """
         if len(emb1) != len(emb2):
             raise ValueError("Embeddings must be of the same length")
-        
+
         # Compute dot product
         dot_product = sum(a * b for a, b in zip(emb1, emb2))
-        
+
         # Compute magnitudes
         magnitude1 = sum(a * a for a in emb1) ** 0.5
         magnitude2 = sum(b * b for b in emb2) ** 0.5
-        
+
         # Avoid division by zero
         if magnitude1 == 0 or magnitude2 == 0:
             return 0.0
-        
+
         return dot_product / (magnitude1 * magnitude2)
 
     def __contains__(self, key: TKey) -> bool:
@@ -175,15 +167,10 @@ class FuzzyDict(dict[TKey, TValue]):
 
         Space Complexity: O(d) for temporary embedding
         """
-        if super().__contains__(key):  # exact match
-            return True
-        key_embedding = self.embed_func(str(key))
-        for embedding in self.embeddings.values():
-            if self.distance(embedding, key_embedding) >= self.max_distance:
-                return True
-        return False
+        found_key = self.find_key(key)
+        return found_key is not None
 
-    def find_key(self, key: TKey):
+    def find_key(self, key: TKey) -> TKey | None:
         """
         Return the stored key that matches `key` exactly or approximately,
         or None if no match exists.
@@ -202,7 +189,7 @@ class FuzzyDict(dict[TKey, TValue]):
         key_embedding = self.embed_func(str(key))
 
         # Try ANN search first if available
-        if AnnoyIndex is not None and self.embeddings:
+        if self.embeddings:
             # get dimension from first embedding
             dim = len(next(iter(self.embeddings.values())))
             if self._ann_index is None or self._ann_index_dirty:
@@ -213,18 +200,25 @@ class FuzzyDict(dict[TKey, TValue]):
                     ids, dists = self._ann_index.get_nns_by_vector(
                         list(key_embedding), 10, include_distances=True
                     )
+                    # Use Annoy's angular distances as a first filter,
+                    # then verify with exact cosine similarity for final candidates
                     best = None
-                    best_dist = None
-                    for ann_id, dist in zip(ids, dists):
+                    best_similarity = None
+                    for ann_id, angular_dist in zip(ids, dists):
                         candidate_key = self._key_for_ann_id.get(ann_id)
                         if candidate_key is None:
                             continue
-                        # Annoy distances are approximate; compute exact similarity
+                        # Quick filter: if angular distance is too high, skip
+                        # Use a very permissive threshold for the initial Annoy filter
+                        if angular_dist > 1.0:  # Allow most candidates through
+                            continue
+                        # Compute exact cosine similarity for promising candidates
                         candidate_emb = self.embeddings[candidate_key]
-                        exact = self.distance(candidate_emb, key_embedding)
-                        if exact >= self.max_distance:
-                            if best_dist is None or exact > best_dist:
-                                best, best_dist = candidate_key, exact
+                        exact_similarity = self.distance(candidate_emb, key_embedding)
+                        if exact_similarity >= self.max_distance:
+                            if (best_similarity is None or
+                                exact_similarity > best_similarity):
+                                best, best_similarity = candidate_key, exact_similarity
                     return best
                 except Exception:
                     # fallback to linear scan if ANN fails
@@ -246,29 +240,18 @@ class FuzzyDict(dict[TKey, TValue]):
 
         Time Complexity:
         - O(1) for exact matches
-        - O(E + m·d + m log m) worst case for approximate matches
+        - With Annoy: O(E + log m) average case for approximate matches
+        - Without Annoy: O(E + m·d) worst case for approximate matches
         where E = embed_func cost, m = items, d = embedding dimension
 
-        The m log m term comes from sorting results by distance.
-        Could be optimized to O(E + m·d) by finding minimum in single pass.
-
-        Space Complexity: O(m) in worst case (if all items match)
+        Space Complexity: O(d) for temporary embedding
 
         Raises KeyError if no match found within max_distance.
         """
-        if super().__contains__(key):  # exact match
-            return super().__getitem__(key)
-        key_embedding = self.embed_func(str(key))
-        results = []
-        for existing_key, embedding in self.embeddings.items():
-            dist = self.distance(embedding, key_embedding)
-            if dist >= self.max_distance:
-                results.append((existing_key, dist))
-        if not results:
+        found_key = self.find_key(key)
+        if found_key is None:
             raise KeyError(f"No approximate match found for key: {key}")
-        # Return the value for the best approximate match (highest cosine similarity)
-        results.sort(key=lambda k: k[1], reverse=True)
-        return super().__getitem__(results[0][0])
+        return super().__getitem__(found_key)
 
 
 class FuzzyLruCache:
