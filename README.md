@@ -27,7 +27,7 @@ from semantic_cache import semantic_cache
 @semantic_cache(
     embed_func=lambda x: (hash(x.lower()),),
     max_size=100,
-    max_distance=0.0  # Only exact matches
+    max_distance=1.0  # Very high similarity required (near exact)
 )
 def expensive_function(query: str) -> str:
     # Simulate expensive computation
@@ -54,7 +54,7 @@ client = openai.Client()
             input=text
         ).data[0].embedding
     ),
-    max_distance=0.80,  # Allow similar queries
+    max_distance=0.80,  # Cosine similarity threshold: 0.8 or higher for matches
     max_size=50
 )
 def ask_ai(question: str) -> str:
@@ -88,7 +88,7 @@ client = openai.Client(
             input=text
         ).data[0].embedding
     ),
-    max_distance=0.9,
+    max_distance=0.9,  # High cosine similarity threshold
     max_size=10
 )
 def local_llm_query(prompt: str) -> str:
@@ -119,7 +119,7 @@ def embed_func(text: str) -> tuple[float, ...]:
 
 # Create a fuzzy dictionary
 fuzzy_dict = FuzzyDict(
-    max_distance=0.8,
+    max_distance=0.8,  # Cosine similarity threshold (0.8 or higher matches)
     embed_func=embed_func
 )
 
@@ -146,7 +146,7 @@ from semantic_cache import FuzzyLruCache
 cache = FuzzyLruCache(
     embed_func=embed_func,
     capacity=3,  # Only keep 3 items
-    max_distance=0.0
+    max_distance=1.0  # Very high similarity required (near exact matches)
 )
 
 # Add items
@@ -168,20 +168,31 @@ assert cache.get("first") == "value1"  # Still present
 The library uses the Annoy (Approximate Nearest Neighbors) library for efficient similarity search:
 
 - **Exact matches**: O(1) lookup time
-- **Approximate matches**: O(log n) average case with Annoy, O(n) fallback without Annoy
+- **Approximate matches**: O(E + log m) average case using Annoy's angular metric
 - **Memory efficient**: Embeddings cached to avoid recomputation
+- **No fallback**: Uses only Annoy for similarity search (no linear scan fallback)
 
 ### Time Complexity Summary
 
 For a cache with `m` items and embeddings of dimension `d`:
 
-| Operation | With Annoy | Without Annoy |
-|-----------|------------|---------------|
-| Insert    | O(E) amortized | O(E) amortized |
-| Lookup    | O(E + log m) | O(E + m·d) |
-| Delete    | O(1) | O(1) |
+| Operation | Time Complexity | Notes |
+|-----------|----------------|-------|
+| Insert    | O(E) amortized | E = embedding computation cost |
+| Lookup    | O(E + log m) | Uses Annoy's fast ANN search |
+| Delete    | O(1) | Immediate removal |
 
 Where `E` is the cost of computing embeddings (typically O(d) for simple embeddings).
+
+### Distance Metrics
+
+The library uses **cosine similarity** for `max_distance` parameters:
+- `max_distance=1.0`: Only identical vectors match
+- `max_distance=0.8`: Vectors with cosine similarity ≥ 0.8 match  
+- `max_distance=0.0`: Only orthogonal vectors match
+- `max_distance=-1.0`: All vectors match (including opposite directions)
+
+Internally, the library converts cosine similarity to cosine distance for Annoy's angular metric using the formula: `cosine_distance = sqrt(2 - 2 * cosine_similarity)`
 
 ## Requirements
 
