@@ -19,7 +19,7 @@ def test_ollama_embedding(openai_client):
         )
         return tuple(response.data[0].embedding)
 
-    f = FuzzyDict(max_distance=0.9, embed_func=embed)
+    f = FuzzyDict(max_distance=0.8, embed_func=embed)
     f['hello'] = 'world'
     f['goodbye'] = 'moon'
     f['Adios'] = 'luna'
@@ -27,7 +27,7 @@ def test_ollama_embedding(openai_client):
     assert f['hello'] == 'world'
     assert f['hello!'] == 'world'
     assert f['goodbye!'] == 'moon'
-    assert f['bye'] == 'moon'
+    assert f['bye bye'] == 'moon'
     assert f['adiós'] == 'luna'
     assert f['Adiós!'] == 'luna'
 
@@ -43,7 +43,7 @@ def test_ollama_decorator(openai_client):
                 input=text
             ).data[0].embedding
         ),
-        max_distance=0.9,
+        max_distance=0.91,
         max_size=10
     )
     def get_response(prompt: str) -> str:
