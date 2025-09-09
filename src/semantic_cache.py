@@ -315,7 +315,8 @@ class FuzzyLruCache:
         # If approximate matching would find an existing key we treat the
         # provided key as a new insertion (consistent with original behavior).
         if key in self.cache:  # exact match
-            # refresh its position
+            # update the value and refresh its position
+            self.cache[key] = value
             if key in self.order:
                 self.order.pop(key)
             self.order[key] = None
@@ -333,6 +334,7 @@ class FuzzyLruCache:
                         del self.cache[oldest_key]
             # insert new item
             self.cache[key] = value
+            self.order[key] = None
             self.order[key] = None
 
 
