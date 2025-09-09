@@ -49,7 +49,8 @@ class FuzzyDict(dict[TKey, TValue]):
         Space Complexity: O(1)
 
         Args:
-            max_distance: Maximum distance for keys to be considered similar
+            max_distance: Minimum cosine similarity for keys to be considered similar
+                         (1.0 = identical, 0.0 = orthogonal, -1.0 = opposite)
             embed_func: Function that converts keys to embedding vectors
         """
         super().__init__(*args, **kwargs)
@@ -136,14 +137,31 @@ class FuzzyDict(dict[TKey, TValue]):
     @classmethod
     def distance(cls, emb1: tuple[float, ...], emb2: tuple[float, ...]) -> float:
         """
-        Compute Euclidean distance between two embeddings.
+        Compute cosine similarity between two embeddings.
+        
+        Returns cosine similarity ranging from -1 to 1:
+        - 1.0: identical vectors (exact match)
+        - 0.0: orthogonal vectors (no similarity)
+        - -1.0: opposite vectors (maximum dissimilarity)
 
         Time Complexity: O(d) where d = embedding dimension
         Space Complexity: O(1)
         """
         if len(emb1) != len(emb2):
             raise ValueError("Embeddings must be of the same length")
-        return sum((a - b) ** 2 for a, b in zip(emb1, emb2)) ** 0.5
+        
+        # Compute dot product
+        dot_product = sum(a * b for a, b in zip(emb1, emb2))
+        
+        # Compute magnitudes
+        magnitude1 = sum(a * a for a in emb1) ** 0.5
+        magnitude2 = sum(b * b for b in emb2) ** 0.5
+        
+        # Avoid division by zero
+        if magnitude1 == 0 or magnitude2 == 0:
+            return 0.0
+        
+        return dot_product / (magnitude1 * magnitude2)
 
     def __contains__(self, key: TKey) -> bool:
         """
@@ -161,7 +179,7 @@ class FuzzyDict(dict[TKey, TValue]):
             return True
         key_embedding = self.embed_func(str(key))
         for embedding in self.embeddings.values():
-            if self.distance(embedding, key_embedding) <= self.max_distance:
+            if self.distance(embedding, key_embedding) >= self.max_distance:
                 return True
         return False
 
@@ -201,11 +219,11 @@ class FuzzyDict(dict[TKey, TValue]):
                         candidate_key = self._key_for_ann_id.get(ann_id)
                         if candidate_key is None:
                             continue
-                        # Annoy distances are approximate; compute exact distance
+                        # Annoy distances are approximate; compute exact similarity
                         candidate_emb = self.embeddings[candidate_key]
                         exact = self.distance(candidate_emb, key_embedding)
-                        if exact <= self.max_distance:
-                            if best_dist is None or exact < best_dist:
+                        if exact >= self.max_distance:
+                            if best_dist is None or exact > best_dist:
                                 best, best_dist = candidate_key, exact
                     return best
                 except Exception:
@@ -217,8 +235,8 @@ class FuzzyDict(dict[TKey, TValue]):
         best_dist = None
         for existing_key, embedding in self.embeddings.items():
             dist = self.distance(embedding, key_embedding)
-            if dist <= self.max_distance:
-                if best_dist is None or dist < best_dist:
+            if dist >= self.max_distance:
+                if best_dist is None or dist > best_dist:
                     best, best_dist = existing_key, dist
         return best
 
@@ -244,12 +262,12 @@ class FuzzyDict(dict[TKey, TValue]):
         results = []
         for existing_key, embedding in self.embeddings.items():
             dist = self.distance(embedding, key_embedding)
-            if dist <= self.max_distance:
+            if dist >= self.max_distance:
                 results.append((existing_key, dist))
         if not results:
             raise KeyError(f"No approximate match found for key: {key}")
-        # Return the value for the first approximate match found sorted by distance
-        results.sort(key=lambda k: k[1])
+        # Return the value for the best approximate match (highest cosine similarity)
+        results.sort(key=lambda k: k[1], reverse=True)
         return super().__getitem__(results[0][0])
 
 
@@ -274,7 +292,7 @@ class FuzzyLruCache:
         self,
         embed_func: GetEmbeddingFunc,
         capacity: int = 128,
-        max_distance: float = 0.01,
+        max_distance: float = 0.8,
     ):
         self.capacity = capacity
         self.cache = FuzzyDict(max_distance=max_distance, embed_func=embed_func)
@@ -339,7 +357,7 @@ class FuzzyLruCache:
 
 
 def semantic_cache(
-    embed_func: GetEmbeddingFunc, max_distance: float = 0.01, max_size: int = 128
+    embed_func: GetEmbeddingFunc, max_distance: float = 0.8, max_size: int = 128
 ):
     """
     Decorator that caches function results with semantic key matching.
@@ -356,7 +374,8 @@ def semantic_cache(
 
     Args:
         embed_func: Function that converts arguments to embedding vectors
-        max_distance: Maximum distance for arguments to be considered similar
+        max_distance: Minimum cosine similarity for arguments to be considered similar
+                     (1.0 = identical, 0.0 = orthogonal, -1.0 = opposite)
         max_size: Maximum number of cached results (LRU eviction)
 
     Returns:
@@ -365,7 +384,7 @@ def semantic_cache(
     Example:
         @semantic_cache(
             embed_func=lambda x: hash_to_vector(str(x)),
-            max_distance=0.1,
+            max_distance=0.8,
             max_size=1000
         )
         def expensive_function(query: str) -> str:

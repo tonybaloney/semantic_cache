@@ -13,13 +13,7 @@ A Python library for semantic caching using embeddings and approximate nearest n
 ## Installation
 
 ```bash
-pip install semantic_functools
-```
-
-For development with OpenAI support:
-
-```bash
-pip install semantic_functools[dev]
+pip install git+https://github.com/tonybaloney/semantic_cache.git
 ```
 
 ## Quick Start
