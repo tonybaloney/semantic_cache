@@ -109,14 +109,18 @@ def local_llm_query(prompt: str) -> str:
 ```python
 from semantic_cache import FuzzyDict
 
-def simple_embedding(text: str) -> tuple[float, ...]:
-    # Simple character-based embedding for demo
-    return tuple(float(ord(c)) for c in text.lower()[:10])
+def embed_func(text: str) -> tuple[float, ...]:
+    return tuple(
+        client.embeddings.create(
+            model="nomic-embed-text:latest",
+            input=text
+        ).data[0].embedding
+    )
 
 # Create a fuzzy dictionary
 fuzzy_dict = FuzzyDict(
-    max_distance=10.0,
-    embed_func=simple_embedding
+    max_distance=0.8,
+    embed_func=embed_func
 )
 
 # Add some entries
@@ -140,7 +144,7 @@ assert "xyz" not in fuzzy_dict
 from semantic_cache import FuzzyLruCache
 
 cache = FuzzyLruCache(
-    embed_func=lambda x: (hash(x.lower()),),
+    embed_func=embed_func,
     capacity=3,  # Only keep 3 items
     max_distance=0.0
 )
@@ -188,23 +192,8 @@ Where `E` is the cost of computing embeddings (typically O(d) for simple embeddi
 ## Development
 
 ```bash
-git clone https://github.com/yourusername/semantic_cache_tools.git
-cd semantic_cache_tools
+git clone https://github.com/tonybaloney/semantic_cache.git
+cd semantic_cache
 pip install -e .[dev]
 pytest
 ```
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please read CONTRIBUTING.md for guidelines.
-
-## Examples Repository
-
-See the `tests/` directory for more examples:
-- `test_ollama.py`: Integration with Ollama/local LLMs
-- `test_mock.py`: Comprehensive test suite with various scenarios
-
