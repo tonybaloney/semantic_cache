@@ -1,4 +1,4 @@
-from typing import TypeVar, Callable
+from typing import OrderedDict, TypeVar, Callable
 
 __all__ = ["semantic_cache", "FuzzyDict", "FuzzyLruCache"]
 
@@ -8,12 +8,13 @@ GetEmbeddingFunc = Callable[[str], tuple[float, ...]]
 
 
 class FuzzyDict(dict[TKey, TValue]):
-    embeddings: dict[TKey, tuple[float, ...]] = {}
+    embeddings: dict[TKey, tuple[float, ...]]
 
     def __init__(self, min_distance: float, embed_func: GetEmbeddingFunc, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.min_distance = min_distance
         self.embed_func = embed_func
+        self.embeddings: dict[TKey, tuple[float, ...]] = {}
 
     def __setitem__(self, key: TKey, value: TValue) -> None:
         if key not in self.embeddings:
@@ -21,7 +22,9 @@ class FuzzyDict(dict[TKey, TValue]):
         return super().__setitem__(key, value)
 
     def __delitem__(self, key: TKey) -> None:
-        del self.embeddings[key]
+        # guard in case key is not present in embeddings for some reason
+        if key in self.embeddings:
+            del self.embeddings[key]
         return super().__delitem__(key)
 
     @classmethod
@@ -31,27 +34,46 @@ class FuzzyDict(dict[TKey, TValue]):
         return sum((a - b) ** 2 for a, b in zip(emb1, emb2)) ** 0.5
 
     def __contains__(self, key: TKey) -> bool:
-        if super().__contains__(key): # exact match
+        if super().__contains__(key):  # exact match
             return True
         key_embedding = self.embed_func(str(key))
         for embedding in self.embeddings.values():
-            if self.distance(embedding, key_embedding) <= self.min_distance:
+            if self.distance(embedding, key_embedding) < self.min_distance:
                 return True
         return False
 
+    def find_key(self, key: TKey):
+        """
+        Return the stored key that matches `key` exactly or approximately,
+        or None if no match exists.
+        """
+        if super().__contains__(key):
+            return key
+        key_embedding = self.embed_func(str(key))
+        best = None
+        best_dist = None
+        for existing_key, embedding in self.embeddings.items():
+            dist = self.distance(embedding, key_embedding)
+            if dist < self.min_distance:
+                if best is None or dist < best_dist:
+                    best, best_dist = existing_key, dist
+        return best
+
     def __getitem__(self, key: TKey) -> TValue:
-        if super().__contains__(key): # exact match
+        if super().__contains__(key):  # exact match
             return super().__getitem__(key)
         key_embedding = self.embed_func(str(key))
         results = []
         for existing_key, embedding in self.embeddings.items():
-            if distance := self.distance(embedding, key_embedding) <= self.min_distance:
-                results.append((existing_key, distance))
+            dist = self.distance(embedding, key_embedding)
+            if dist < self.min_distance:
+                results.append((existing_key, dist))
         if not results:
             raise KeyError(f"No approximate match found for key: {key}")
         # Return the value for the first approximate match found sorted by distance
         results.sort(key=lambda k: k[1])
         return super().__getitem__(results[0][0])
+
 
 
 class FuzzyLruCache:
@@ -60,23 +82,45 @@ class FuzzyLruCache:
     def __init__(self, embed_func: GetEmbeddingFunc, capacity: int = 128, min_distance: float = 0.01):
         self.capacity = capacity
         self.cache = FuzzyDict(min_distance=min_distance, embed_func=embed_func)
-        self.order = []
+        # Use an OrderedDict as an O(1) LRU tracking structure:
+        # keys map to None; newest keys are at the end.
+        self.order = OrderedDict()
 
     def get(self, key):
-        if key in self.cache: # exact match and approx match
-            self.order.remove(key)
-            self.order.append(key)
-            return self.cache[key]
+        # find the actual stored key (exact or approximate)
+        match_key = self.cache.find_key(key)
+        if match_key is not None:
+            # Move the matched key to the end (most recently used) in O(1)
+            if match_key in self.order:
+                self.order.pop(match_key)
+            self.order[match_key] = None
+            return self.cache[match_key]
         return None
 
     def put(self, key, value):
-        if key in self.cache: # exact match, pop to end
-            self.order.remove(key)
-        elif len(self.cache) >= self.capacity:
-            oldest_key = self.order.pop(0)
-            del self.cache[oldest_key]
-        self.cache[key] = value # insert new item
-        self.order.append(key)
+        # If the exact key already exists, we'll refresh its position.
+        # If approximate matching would find an existing key we treat the
+        # provided key as a new insertion (consistent with original behavior).
+        if key in self.cache:  # exact match
+            # refresh its position
+            if key in self.order:
+                self.order.pop(key)
+            self.order[key] = None
+        else:
+            # Evict oldest if full
+            if len(self.cache) >= self.capacity:
+                # popitem(last=False) removes the oldest item in O(1)
+                try:
+                    oldest_key, _ = self.order.popitem(last=False)
+                except KeyError:
+                    oldest_key = None
+                if oldest_key is not None:
+                    # remove associated cache entry
+                    if oldest_key in self.cache:
+                        del self.cache[oldest_key]
+            # insert new item
+            self.cache[key] = value
+            self.order[key] = None
 
 
 def semantic_cache(embed_func: GetEmbeddingFunc,
