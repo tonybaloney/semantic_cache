@@ -126,36 +126,27 @@ class FuzzyDict(dict[TKey, TValue]):
                 self._ann_index_dirty = True
         return super().__delitem__(key)
 
-    @classmethod
-    def distance(cls, emb1: tuple[float, ...], emb2: tuple[float, ...]) -> float:
+    def _cosine_distance_to_similarity(self, cosine_distance: float) -> float:
         """
-        Compute cosine similarity between two embeddings.
+        Convert Annoy's cosine distance to cosine similarity.
 
-        Returns cosine similarity ranging from -1 to 1:
-        - 1.0: identical vectors (exact match)
-        - 0.0: orthogonal vectors (no similarity)
-        - -1.0: opposite vectors (maximum dissimilarity)
-
-        Time Complexity: O(d) where d = embedding dimension
-        Space Complexity: O(1)
+        From Annoy with angular metric:
+        cosine_distance = sqrt(2 - 2*cosine_similarity)
+        Therefore: cosine_similarity = 1 - cosine_distance^2/2
         """
-        if len(emb1) != len(emb2):
-            raise ValueError("Embeddings must be of the same length")
+        return 1 - (cosine_distance * cosine_distance) / 2
 
-        # Compute dot product
-        dot_product = sum(a * b for a, b in zip(emb1, emb2))
+    def _cosine_similarity_to_distance(self, cosine_similarity: float) -> float:
+        """
+        Convert cosine similarity to Annoy's cosine distance.
 
-        # Compute magnitudes
-        magnitude1 = sum(a * a for a in emb1) ** 0.5
-        magnitude2 = sum(b * b for b in emb2) ** 0.5
+        cosine_distance = sqrt(2 - 2*cosine_similarity)
+        """
+        import math
 
-        # Avoid division by zero
-        if magnitude1 == 0 or magnitude2 == 0:
-            return 0.0
+        return math.sqrt(2 - 2 * cosine_similarity)
 
-        return dot_product / (magnitude1 * magnitude2)
-
-    def __contains__(self, key: TKey) -> bool:
+    def __contains__(self, key: TKey) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Check if key exists exactly or approximately in the dictionary.
 
@@ -196,43 +187,35 @@ class FuzzyDict(dict[TKey, TValue]):
                 self._build_ann_index(dim)
             if self._ann_index is not None:
                 # request top-k neighbors (k small like 10)
-                try:
-                    ids, dists = self._ann_index.get_nns_by_vector(
-                        list(key_embedding), 10, include_distances=True
-                    )
-                    # Use Annoy's angular distances as a first filter,
-                    # then verify with exact cosine similarity for final candidates
-                    best = None
-                    best_similarity = None
-                    for ann_id, angular_dist in zip(ids, dists):
-                        candidate_key = self._key_for_ann_id.get(ann_id)
-                        if candidate_key is None:
-                            continue
-                        # Quick filter: if angular distance is too high, skip
-                        # Use a very permissive threshold for the initial Annoy filter
-                        if angular_dist > 1.0:  # Allow most candidates through
-                            continue
-                        # Compute exact cosine similarity for promising candidates
-                        candidate_emb = self.embeddings[candidate_key]
-                        exact_similarity = self.distance(candidate_emb, key_embedding)
-                        if exact_similarity >= self.max_distance:
-                            if (best_similarity is None or
-                                exact_similarity > best_similarity):
-                                best, best_similarity = candidate_key, exact_similarity
-                    return best
-                except Exception:
-                    # fallback to linear scan if ANN fails
-                    pass
+                ids, dists = self._ann_index.get_nns_by_vector(
+                    list(key_embedding), 10, include_distances=True
+                )
+                # Convert max_distance (cosine similarity) to cosine distance
+                max_cosine_distance = self._cosine_similarity_to_distance(
+                    self.max_distance
+                )
 
-        # Fallback: linear scan
-        best = None
-        best_dist = None
-        for existing_key, embedding in self.embeddings.items():
-            dist = self.distance(embedding, key_embedding)
-            if dist >= self.max_distance:
-                if best_dist is None or dist > best_dist:
-                    best, best_dist = existing_key, dist
-        return best
+                # Find best match using Annoy's cosine distances
+                best = None
+                best_cosine_distance = None
+                for ann_id, cosine_distance in zip(ids, dists):
+                    candidate_key = self._key_for_ann_id.get(ann_id)
+                    if candidate_key is None:
+                        continue
+                    # Use Annoy's cosine distance
+                    if cosine_distance <= max_cosine_distance:
+                        if (
+                            best_cosine_distance is None
+                            or cosine_distance < best_cosine_distance
+                        ):
+                            best, best_cosine_distance = (
+                                candidate_key,
+                                cosine_distance,
+                            )
+                return best
+
+        # No embeddings or no matches found
+        return None
 
     def __getitem__(self, key: TKey) -> TValue:
         """

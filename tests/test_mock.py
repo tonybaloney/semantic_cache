@@ -11,10 +11,10 @@ def exact_match_embed(s):
     h3 = hash(s.lower() + "_salt2")
     # Normalize to unit vector
     embedding = (float(h1), float(h2), float(h3))
-    magnitude = sum(x*x for x in embedding) ** 0.5
+    magnitude = sum(x * x for x in embedding) ** 0.5
     if magnitude == 0:
         return (1.0, 0.0, 0.0)  # Default vector
-    return tuple(x/magnitude for x in embedding)
+    return tuple(x / magnitude for x in embedding)
 
 
 # A mock function that returns a simple string result for caching
@@ -40,9 +40,7 @@ def test_fuzzy_dict():
 
 
 def test_fuzzy_lru_cache():
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=2, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=2, max_distance=0.999)
     cache.put("Hello", "World")
     assert cache.get("hello") == "World"
 
@@ -81,12 +79,14 @@ def test_fuzzy_dict_approximate_matches():
         while len(chars) < 3:
             chars.append(0)
         # Normalize to unit vector for cosine similarity
-        magnitude = sum(c*c for c in chars) ** 0.5
+        magnitude = sum(c * c for c in chars) ** 0.5
         if magnitude == 0:
             return tuple(0.0 for _ in chars)
-        return tuple(float(c)/magnitude for c in chars)
+        return tuple(float(c) / magnitude for c in chars)
 
-    f = FuzzyDict(max_distance=0.9, embed_func=simple_embed)  # High similarity threshold
+    f = FuzzyDict(
+        max_distance=0.9, embed_func=simple_embed
+    )  # High similarity threshold
     f["hello"] = "greeting"
 
     # "hallo" should be similar enough for cosine similarity
@@ -130,10 +130,10 @@ def test_fuzzy_dict_multiple_similar_keys():
     def char_embed(s):
         # Normalize embeddings for proper cosine similarity
         chars = [float(ord(c)) for c in s[:2]]
-        magnitude = sum(c*c for c in chars) ** 0.5
+        magnitude = sum(c * c for c in chars) ** 0.5
         if magnitude == 0:
             return tuple(0.0 for _ in chars)
-        return tuple(c/magnitude for c in chars)
+        return tuple(c / magnitude for c in chars)
 
     f = FuzzyDict(max_distance=0.95, embed_func=char_embed)  # High similarity threshold
     f["aa"] = "first"
@@ -145,25 +145,26 @@ def test_fuzzy_dict_multiple_similar_keys():
     assert result == "aa"
 
     # Should find a similar match
-    result = f.find_key("ad")  
+    result = f.find_key("ad")
     assert result is not None  # Should find some match
 
 
 def test_fuzzy_dict_distance_calculation():
-    """Test the cosine similarity function directly."""
-    emb1 = (1.0, 0.0, 0.0)
-    emb2 = (1.0, 0.0, 0.0)  # identical
+    """Test the cosine distance conversion functions."""
+    # Create a FuzzyDict instance to test conversion methods
+    fd = FuzzyDict(max_distance=0.8, embed_func=lambda x: (1.0, 0.0, 0.0))
 
-    # Expected: cosine similarity = 1.0 for identical vectors
-    expected = 1.0
-    actual = FuzzyDict.distance(emb1, emb2)
-    assert abs(actual - expected) < 1e-10
+    # Test cosine similarity to cosine distance conversion
+    cos_sim = 0.8
+    cos_dist = fd._cosine_similarity_to_distance(cos_sim)
+    expected_dist = (2 - 2 * 0.8) ** 0.5  # sqrt(2 - 2*cos_sim)
+    assert abs(cos_dist - expected_dist) < 1e-10
 
-    # Test orthogonal vectors
-    emb3 = (0.0, 1.0, 0.0)
-    expected_ortho = 0.0
-    actual_ortho = FuzzyDict.distance(emb1, emb3)
-    assert abs(actual_ortho - expected_ortho) < 1e-10
+    # Test cosine distance to cosine similarity conversion
+    cos_dist = 0.6325  # approximately sqrt(2 - 2*0.8)
+    cos_sim_back = fd._cosine_distance_to_similarity(cos_dist)
+    expected_sim = 1 - (0.6325 * 0.6325) / 2
+    assert abs(cos_sim_back - expected_sim) < 1e-3  # small tolerance for floating point
 
 
 def test_fuzzy_dict_embedding_caching():
@@ -208,9 +209,7 @@ def test_lru_cache_basic_functionality():
 
 def test_lru_cache_eviction_policy():
     """Test that LRU eviction works correctly."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=2, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=2, max_distance=0.999)
 
     # Fill cache
     cache.put("first", "value1")
@@ -229,9 +228,7 @@ def test_lru_cache_eviction_policy():
 
 def test_lru_cache_update_existing():
     """Test updating existing keys refreshes their position."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=2, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=2, max_distance=0.999)
 
     cache.put("key1", "value1")
     cache.put("key2", "value2")
@@ -249,9 +246,7 @@ def test_lru_cache_update_existing():
 
 def test_lru_cache_fuzzy_matching():
     """Test LRU cache with fuzzy key matching."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=3, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=3, max_distance=0.999)
 
     cache.put("Hello", "World")
     cache.put("FOO", "Bar")
@@ -264,9 +259,7 @@ def test_lru_cache_fuzzy_matching():
 
 def test_lru_cache_order_tracking():
     """Test that LRU order is maintained correctly."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=3, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=3, max_distance=0.999)
 
     # Add items in order
     cache.put("a", "1")
@@ -422,9 +415,7 @@ def test_fuzzy_dict_empty_embeddings():
 
 def test_lru_cache_concurrent_operations():
     """Test LRU cache with rapid get/put operations."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=5, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=5, max_distance=0.999)
 
     # Rapid insertions and retrievals
     for i in range(10):
@@ -452,16 +443,18 @@ def test_semantic_cache_string_only():
     # Test with string arguments
     result1 = string_func("hello world")
     assert call_count == 1
-    
+
     # Same string should hit cache
     result2 = string_func("hello world")
     assert call_count == 1
     assert result1 == result2
-    
+
     # Different string should miss cache
     result3 = string_func("goodbye world")
     assert call_count == 2
     assert result1 != result3
+
+
 def test_fuzzy_dict_very_similar_keys():
     """Test behavior with keys that have very small differences."""
 
@@ -469,10 +462,10 @@ def test_fuzzy_dict_very_similar_keys():
         # Very precise embedding that can detect small differences
         chars = [ord(c) + i * 0.1 for i, c in enumerate(s)]
         # Normalize for cosine similarity
-        magnitude = sum(c*c for c in chars) ** 0.5
+        magnitude = sum(c * c for c in chars) ** 0.5
         if magnitude == 0:
             return tuple(0.0 for _ in chars)
-        return tuple(c/magnitude for c in chars)
+        return tuple(c / magnitude for c in chars)
 
     # Use extremely high threshold to require near-perfect similarity
     f = FuzzyDict(max_distance=0.999999, embed_func=precise_embed)
@@ -492,9 +485,7 @@ def test_fuzzy_dict_very_similar_keys():
 
 def test_lru_cache_stress_eviction():
     """Stress test LRU eviction with many operations."""
-    cache = FuzzyLruCache(
-        embed_func=exact_match_embed, capacity=3, max_distance=0.999
-    )
+    cache = FuzzyLruCache(embed_func=exact_match_embed, capacity=3, max_distance=0.999)
 
     # Fill cache
     cache.put("a", "1")
