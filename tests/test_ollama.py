@@ -57,8 +57,8 @@ def test_ollama_decorator(openai_client):
         return response.choices[0].message.content
 
     r1 = get_response("What is the capital of France?")
-    r2 = get_response("What is the capital of France!")
-    r3 = get_response("What is the capital of Germany?")
+    r2 = get_response("What is the capital of France!") # Cached
+    r3 = get_response("What is the capital of Germany?") # New query
 
     assert r1 == r2  # Should hit the cache
     assert r1 != r3  # Different question, should not hit the cache
