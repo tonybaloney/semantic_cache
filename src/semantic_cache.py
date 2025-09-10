@@ -1,4 +1,12 @@
-from typing import OrderedDict, TypeVar, Callable
+from typing import (
+    Concatenate,
+    Generic,
+    OrderedDict,
+    Tuple,
+    TypeVar,
+    Callable,
+    ParamSpec,
+)
 from annoy import AnnoyIndex
 
 __all__ = ["semantic_cache", "FuzzyDict", "FuzzyLruCache"]
@@ -146,7 +154,7 @@ class FuzzyDict(dict[TKey, TValue]):
 
         return math.sqrt(2 - 2 * cosine_similarity)
 
-    def __contains__(self, key: TKey) -> bool: # pyright: ignore[reportIncompatibleMethodOverride]
+    def __contains__(self, key: TKey) -> bool:  # pyright: ignore[reportIncompatibleMethodOverride]
         """
         Check if key exists exactly or approximately in the dictionary.
 
@@ -237,7 +245,7 @@ class FuzzyDict(dict[TKey, TValue]):
         return super().__getitem__(found_key)
 
 
-class FuzzyLruCache:
+class FuzzyLruCache(Generic[TValue]):
     """
     LRU cache with fuzzy key matching using embeddings.
 
@@ -252,7 +260,7 @@ class FuzzyLruCache:
     Space Complexity: O(capacity · d) for embeddings + O(capacity) for LRU order
     """
 
-    cache: FuzzyDict[str, str]
+    cache: FuzzyDict[str, TValue]
 
     def __init__(
         self,
@@ -266,7 +274,7 @@ class FuzzyLruCache:
         # keys map to None; newest keys are at the end.
         self.order = OrderedDict()
 
-    def get(self, key):
+    def get(self, key: str):
         """
         Get value for key (exact or approximate match).
 
@@ -285,7 +293,7 @@ class FuzzyLruCache:
             return self.cache[match_key]
         return None
 
-    def put(self, key, value):
+    def put(self, key: str, value: TValue):
         """
         Put key-value pair in cache with LRU eviction.
 
@@ -322,9 +330,16 @@ class FuzzyLruCache:
             self.order[key] = None
 
 
+Param = ParamSpec("Param")
+TResult = TypeVar("TResult")
+
+
 def semantic_cache(
     embed_func: GetEmbeddingFunc, max_distance: float = 0.8, max_size: int = 128
-):
+) -> Callable[
+    [Callable[Concatenate[str, Param], TResult]],
+    Callable[Concatenate[str, Param], TResult],
+]:
     """
     Decorator that caches function results with semantic key matching.
 
@@ -361,15 +376,16 @@ def semantic_cache(
         embed_func=embed_func, capacity=max_size, max_distance=max_distance
     )
 
-    def inner(func):
-        def wrapper(*args, **kwargs):
-            key = (args, frozenset(kwargs.items()))
-            cached_result = cache.get(key)
+    def inner(
+        func: Callable[Concatenate[str, Param], TResult],
+    ) -> Callable[Concatenate[str, Param], TResult]:
+        def wrapper(input: str, *args: Param.args, **kwargs: Param.kwargs) -> TResult:
+            cached_result = cache.get(input)
             if cached_result is not None:
                 return cached_result
 
-            result = func(*args, **kwargs)
-            cache.put(key, result)
+            result = func(input, *args, **kwargs)
+            cache.put(input, result)
             return result
 
         return wrapper
