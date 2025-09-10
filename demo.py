@@ -29,5 +29,5 @@ def get_response(prompt: str) -> str:
 
 
 r1 = get_response("What is the capital of France?")
-r2 = get_response("What is the capital of France!")  # Cached
+r2 = get_response("What is the capital city of France?")  # Cached
 r3 = get_response("What is the capital of Germany?")  # New query
