@@ -1,14 +1,13 @@
 # Semantic Cache Tools
 
-A Python library for semantic caching using embeddings and approximate nearest neighbor search. Cache function results based on semantic similarity of inputs rather than exact matches.
+A Python library for semantic caching using embeddings and approximate nearest neighbor (ANN) search. Cache function results based on semantic similarity of inputs rather than exact matches.
 
 ## Features
 
 - **Semantic Caching Decorator**: Cache function results based on semantic similarity of string inputs
 - **FuzzyDict**: Dictionary with approximate key matching using embeddings
 - **FuzzyLruCache**: LRU cache with fuzzy matching capabilities
-- **Fast Similarity Search**: Uses Annoy library for efficient approximate nearest neighbor search
-- **Flexible Embedding Functions**: Support for any embedding function (OpenAI, Ollama, custom)
+- **Fast Similarity Search**: Uses Spotify's Annoy library for efficient approximate nearest neighbor search
 
 ## Installation
 
@@ -18,48 +17,31 @@ pip install git+https://github.com/tonybaloney/semantic_cache.git
 
 ## Quick Start
 
+Use the `@semantic_cache` decorator like the `functools.lru_cache` decorator. It can be used to cache anything with a single `str` parameter and is particularly useful for caching LLM calls.
+
+Adjust the `max_distance` settings based on your requirements.
+
 ### Basic Semantic Caching
-
-```python
-from semantic_cache import semantic_cache
-
-# Simple hash-based similarity (for demonstration)
-@semantic_cache(
-    embed_func=lambda x: (hash(x.lower()),),
-    max_size=100,
-    max_distance=1.0  # Very high similarity required (near exact)
-)
-def expensive_function(query: str) -> str:
-    # Simulate expensive computation
-    return f"Result for: {query}"
-
-# These will hit the cache due to case-insensitive matching
-result1 = expensive_function("What is Python?")
-result2 = expensive_function("what is python?")  # Cache hit!
-assert result1 == result2
-```
-
-### Using with OpenAI Embeddings
 
 ```python
 import openai
 from semantic_cache import semantic_cache
 
-client = openai.Client()
+client = openai.Client()  # this can be anything
 
 @semantic_cache(
     embed_func=lambda text: tuple(
         client.embeddings.create(
-            model="text-embedding-ada-002",
+            model="text-embedding-3-small",
             input=text
         ).data[0].embedding
     ),
     max_distance=0.80,  # Cosine similarity threshold: 0.8 or higher for matches
-    max_size=50
+    max_size=512 # max cache entries
 )
 def ask_ai(question: str) -> str:
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-5-mini",
         messages=[{"role": "user", "content": question}]
     )
     return response.choices[0].message.content
